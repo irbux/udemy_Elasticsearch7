@@ -73,4 +73,217 @@ curl -H 'Content-Type: application/json' -XGET '127.0.0.1:9200/shakespeare/_sear
 
 ### Lecture 5. Intro to HTTP and RESTful API's
 
+* es7 uses  a RESTful API
+* REST (Representational State Transfer)
+* REST guiding constrains:
+    * client-server architecture
+    * statelessness
+    * cacheability
+    * layered system
+    * code on demand (send JS)
+    * uniform interface
+* in the course we wil use curl (duh....).  `curl -H "Content-Type: application/json" <URL> -d <BODY>`
+* we can use postman
+* ?pretty prettifies response
+
+### Lecture 6. Elasticsearch Basics: Logical Concepts
+
+* the basic logical entity of elasticsearch is the document:
+    * they are like a row in a DB. they have a unique ID and type
+    * they are what we look for. text, JSON, any structured data
+* index:
+    * it powers search in documents in a collection
+    * they contain inverted indices to search on anything at once
+    * they contain mappings that define schemas for data within
+    * like a DB table
+
+### Lecture 7. Term Frequency / Inverse Document Frequency (TF/IDF)
+
+* inverted index contains the document index where a term occurs
+* it also stores the position in teh document
+* TF-IDF: Term Frequency / Inverse Document Frequency
+* TF is how often a term appears in a given document
+* DF is how often a term appears in all documents
+* TF/DF: measures the relevance of a term in a document
+
+### Lecture 8. Using Elasticsearch
+
+* We can use an index in elastisearch:
+    * with RESTful API
+    * client API (using specialized ES& libs) (wrapper of RESTful API)
+    * analytic tools. (eb based GUIs like Kibana). no code involved
+
+### Lecture 9. What's New in Elasticsearch 7
+
+* ES7 vs ES6:
+    * concept of document types is deprecated (only type = doc is used)
+    * Elasticsearch SQL released to prod
+    * lots of changes to default configurations (num of shards, replicattion etc)
+    * Lucene 8 is used
+    * Many X-Pack plugins included in ES7
+    * no need to install java
+    * Kibana still needs external JDK
+    * Cross-cluster replication available
+    * Index Lifecycle Management (ILM) available
+
+### Lecture 10. How Elasticsearch Scales
+
+* documents are hashed to a specific shard
+* each shard may be in a different node of the cluster
+* esch shard is a self-contained Lucene index
+* nodes might fail
+* our example index has 2 primary shards and 2 replicas
+* our cluster has 3 nodes
+* the app round-robin requests among nodes
+* Write requests are routed to the primary shard => replicated to replicas
+* Read requests are routed to the primary or replica shards
+* if node with primary fails. a replica will take its place
+* an odd number of nodes is prefered for resiliency
+* round robin requests srpeads out the load
+* reads is faster than write. write is limited by the number of piamry index shards
+* the number of primary shards cannot change later on, unless we re-index our data. 
+* number of shards can be set upfront with a PUT reqest
+```
+PUT /testindex
+{
+    "settings": {
+        "number_of_shards": 3,
+        "number_of_replicas": 1
+    }
+}
+```
+* in our example we have 3 primary shards an 1 replica for each (6 shards it total)
+* most usecases are read heavy
+
+## Section 2: Mapping and Indexing Data
+
+### Lecture 14. Connecting to your Cluster
+
+* shows how to connect with ssh on the local machine (duh?)
+* in vm do port forwarding in settings => network
+* open port 22 for 127.0.0.1 as guest port 22 for SSH
+* open port 9200 for 127.0.0.1 as guest port 9200 for elastic
+* open port  5601 for 127.0.0.1 as guest port 5601 for kibana
+* `ssh 127.0.0.1` to connect
+
+### Lecture 15. Introducing the MovieLens Data Set
+
+* movielens is like netflix free db with data from movielens.org
+* we will load them to our single node elastic search cluster
+* we grab the dataset from [Grouplens](https://grouplens.org/)
+* we get it [](http://files.grouplens.org/datasets/movielens/ml-latest-small.zip) and extract the data to the folder where we run the ssh
+* its a buch of csv datasets related to movie ratings from users
+
+### Lecture 16. Analyzers
+
+* mappings tell elasticsheard how to store the data. 
+* its like a schema definition
+* it tells ES7 how to store the data and how to index them
+* ES7 has reasonable defaults. but sometimes we need to do customization
+```
+curl -XPUT 127.0.0.1:9200/movies -d
+'{
+    "mappings": {
+        "properties": {
+            "year": {"type":"date"}
+        }
+    }
+}'
+```
+* with mappings we can set: 
+* Field Types (sting,byte,integer,long,float,double,boolean,date)
+```
+"properties": {
+    "user_id" : {
+        "type": "long"
+    }
+}
+```
+* Field Index (do you want this field incexed for full text search?analyzed/not_analyzed)
+```
+"properties": {
+    "genre": {
+        "index": "not_analyzed"
+    }
+}
+```
+* Field Analyzer (define your tokenizer and token filter, standard/whitespace/simple/english etc)
+```
+"properties": {
+    "description": {
+        "analyzer": "english"
+    }
+}
+```
+* An analyzer can: 
+    * apply character filter: remove HTML encodings, convert chars
+    * tokenizer: split strings on whitespace/punctuation/non;letters
+    * token filter: lowercasing, stemming, synonyms, stopwords
+    * standard: splits on word boundaries, removes punctuation, lowercases, good if languae is unknown
+    * simple: split on anything that not a letter and lowercase
+    * whitespace: splits on whitespace but not lowercase
+    * language (english)
+
+### Lecture 17. Import a Single Movie via JSON / REST
+
+* we create our own curl script
+```
+mkdir bin
+cd bin
+nano curl
+```
+* in the nano editor we add
+```
+#!/bin/bash
+/usr/bin/curl/ -H "Content-Type: application/json" "$@"
+```
+* we make script executable `chmod a+x curl`
+* we go to home dir and `source .profile`
+* then we check which command we use for default `which curl`
+* we create a new mapping for our movie index setting year type to date
+```
+curl -XPUT 127.0.0.1:9200/movies -d '
+{
+    "mappings": {
+        "properties": {
+            "year": {
+                "type":"date"
+            }
+        }
+    }
+}'
+```
+* we get reply `{"acknowledged":true,"shards_acknowledged":true,"index":"movies"}`
+* we get the mapping to confirm insertion `curl -XGET 127.0.0.1/movies/_mapping`
+* import a doc
+```
+curl -XPOST 127.0.0.1:9200/movies/_doc/109487 -d
+'{
+    "genre": ["IMAX","Sci-Fi"],
+    "title": "Interstellar",
+    "year": 2014
+}'
+```
+* we pass in the doc using the actual index from dataset
+* the reply is
+```
+{
+    "_index": "movies",
+    "_type": "_doc",
+    "_id": "109487",
+    "_version": 1,
+    "result": "created",
+    "_shards": {
+        "total": 2,
+        "successful": 1,
+        "failed": 0
+    },
+    "_seq_no": 0,
+    "_primary_term": 1
+}
+```
+* we can do a general search with `curl -XGET 127.0.0.1:9200/movies/_search?pretty`
+
+### Lecture 18. Insert Many Movies at Once with the Bulk API
+
 * 

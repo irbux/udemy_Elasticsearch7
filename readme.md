@@ -286,4 +286,108 @@ curl -XPOST 127.0.0.1:9200/movies/_doc/109487 -d
 
 ### Lecture 18. Insert Many Movies at Once with the Bulk API
 
+* the bulk info format the ES7 uses is 
+```
+curl -XPUT 127.0.0.1:9200/_bulk -d 
+'{ "create": { 
+    "_index": "movies",
+    "_id": "124343"
+    }
+}
+{
+    "id": "124343",
+    "title": "Star Trek Beyond",
+    "year": 2016,
+    "genre": ["Action"."Adventure","Sci-Fi"]
+}
+....
+'
+```
+
+* first we create an index and then we pass the doc
+* ES7 will index each doc in a shard so it needs data entry one by one even in bulk data entry
+* we get data from course material `wget http://media.sundog-soft.com/es7/movies.json`
+* we pass in the json in curl to save time as `curl -XPUT 127.0.0.1:9200/_bulk?pretty --data-binary @movies.json`
+* we check what docs are in movies index with `curl -XGET 127.0.0.1:9200/movies/_search?pretty`
+
+### Lecture 19. Updating Data in Elasticsearch
+
+* Every document has a _version field
+* ES documents are immutable
+* When we update an existing document   
+    * a new document is created with an incremented _version
+    * the old document is marked for deletion
+* we can have multiple versions of a doc. ES uses the latest one, it cleans up old versions at will
+* actual command we use in our cluster to do a full update (pass in all fields)
+```
+curl -XPUT 127.0.0.1:9200/movies/_doc/109487?pretty -d '
+{
+  "genres": ["IMAX","Sci-Fi"],
+  "title": "Interstellar foo",
+  "year": 2014
+}'
+```
+* reply is
+```
+{
+  "_index" : "movies",
+  "_type" : "_doc",
+  "_id" : "109487",
+  "_version" : 2,
+  "result" : "updated",
+  "_shards" : {
+    "total" : 2,
+    "successful" : 1,
+    "failed" : 0
+  },
+  "_seq_no" : 5,
+  "_primary_term" : 2
+}
+```
+* we get the doc to confirm `curl -XGET 127.0.0.1:9200/movies/_doc/109487?pretty`
+* to do a PARTIAL update on a doc we use
+```
+curl -XPOST 127.0.0.1:9200/movies/_doc/109487/_update -d '
+{
+  "doc": {
+    "title": "Interstellar"
+  }
+}'
+```
+* so PUT commands on existing docs are treated as full updates. POST requsts with partial fields are treated as partial updates
+
+### Lecture 20. Deleting Data in Elasticsearch
+
+* command to delete an individual doc is `curl -XDELETE 127.0.0.1:9200/movies/_doc/58559`
+* real world scenario. search and delete (to get id) and delete 
+```
+curl -XGET 127.0.0.1:9200/movies/_search?q=Dark
+curl -XDELETE 127.0.0.1:9200/movies/_doc/58559?pretty
+```
+
+### Lecture 21. [Exercise] Insert, Update and Delete a Movie
+
+* Insert fake movie
+```
+curl -XPUT 127.0.0.1:9200/movies/_doc/20000?pretty -d '
+{
+    "title": "Sakis Adventures in Elasticsearch",
+    "genres": ["Documentary"],
+    "year": 2020
+}'
+```
+* search movie by id `curl -XGET 127.0.0.1:9200/movies/_doc/20000?pretty`
+* update
+```
+curl -XPOST 127.0.0.1:9200/movies/_doc/20000/_update -d '
+{
+  "doc": {
+    "genres": ["Documentary","Comedy"]
+  }
+}'
+```
+* delete `curl -XDELETE 127.0.0.1:9200/movies/_doc/20000?pretty`
+
+### Lecture 22. Dealing with Concurrency
+
 * 

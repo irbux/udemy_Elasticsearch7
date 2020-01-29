@@ -411,4 +411,148 @@ curl -XPUT "127.0.0.1:9200/movies/_doc/109487?if_seq_no=6&if_primary_term=2" -d 
 }'
 ```
 * if it fails. get the seq number returned and try again
-* we can send 
+* we can send a request with retry_on_conflict option so that ES handles retries on its own (we spec max retries)
+```
+curl -XPOST 127.0.0.1:9200/movies/_doc/109487/_update?retry_on_conflict=5 -d '
+{
+    "doc": {
+        "title": "Interstellar"
+    }
+}'
+```
+* so when we expect concurrency issues we should take 1 of the 2 approaches presented here
+
+### Lecture 23. Using Analyzers and Tokenizers
+
+* every time we have a textual field in a document we can choose between 2 definitions
+    * search as an exact-match: we use a "keyword" mapping instad of "text". this will suppress analyzing entirely
+    * search on analyzed text fields: this will return partial matches. depending on the analyzer chosen results will be case-insensitive, stemmed etc. need not match all terms
+* lets search for movies with star trek on title
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "match": {
+            "title": "Star Trek"
+        }
+    }
+}'
+```
+* we get back star trek and star wars movie with a smaller score
+* so title is indexed as text
+* we do a query based on genre
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "match_phrase": {
+            "genre": "sci"
+        }
+    }
+}'
+```
+* again we get partial results as title is analyzed
+* we want exact matches... we delete the movies index `curl -XDELETE 127.0.0.1:9200/movies`
+* we reindex
+```
+curl -XPUT 127.0.0.1:9200/movies -d '
+{
+    "mappings": {
+        "properties": {
+            "id": {"type":"integer"},
+            "year": {"type": "date"},
+            "genre": {"type": "keyword"},
+            "title": {"type":"text", "analyzer": "english"}
+        }
+    }
+}'
+```
+* we reinsert docs in bult from json `curl -XPUT 127.0.0.1:9200/_bulk?pretty --data-binary @movies.json`
+* we retry the genre search we dit before we get no results now
+
+### Lecture 24. Data Modeling and Parent/Child Relationships, Part 1
+
+* Strategies for relational data
+* in ES we can normalize or denormalize the data
+* normalize the data:
+    * look up rating => Rating[userID,movieID,rating] => Look up Title => Movie[movieID,title,genres]
+    * SQL relational DB style, 
+    * minimizes storage, easy to change data, but requires 2 queries
+    * transactions matter in response time
+* denormalized data:
+    * look up rating => Rating[userID,rating,title]
+    * titles are duplicated but we got only one query
+    * data integrity/consistency issue
+* Parent/Child relationships:
+    * Star wars => [n new hope,empire strikes back...]
+
+### Lecture 25. Data Modeling and Parent/Child Relationships, Part 2
+
+* we will create an index called seies with a mapping implementing the parent child relationship
+```
+curl -XPUT 127.0.0.1:9200/series -d '
+{
+    "mappings": {
+        "properties": {
+            "film_to_franchise":{
+                "type": "join",
+                "relations": {
+                    "franchise": "film"
+                }
+            }
+        }
+    }
+}'
+```
+* we get sample data to test this relationship `wget http://media.sundog-soft.com/es7/series.json`
+* data in json look like
+```
+{ "create" : { "_index" : "series", "_id" : "1", "routing" : 1} }
+{ "id": "1", "film_to_franchise": {"name": "franchise"}, "title" : "Star Wars" }
+{ "create" : { "_index" : "series", "_id" : "260", "routing" : 1} }
+{ "id": "260", "film_to_franchise": {"name": "film", "parent": "1"}, "title" : "Star Wars: Episode IV 
+- A New Hope", "year":"1977" , "genre":["Action", "Adventure", "Sci-Fi"] }
+{ "create" : { "_index" : "series", "_id" : "1196", "routing" : 1} }
+
+```
+* we see that we add a franchise doc and film docs related to franchise
+* we insert the data `curl -XPUT 127.0.0.1:9200/_bulk?pretty --data-binary @series.json`
+* say we want to get all films related to star wars franchise 
+```
+curl -XGET 127.0.0.1:9200/series/_search?pretty -d '
+{
+    "query": {
+        "has_parent": {
+            "parent_type": "franchise",
+            "query": {
+                "match": {
+                    "title": "Star Wars"
+                }
+            }
+        }
+    }
+}'
+```
+* we will now query for the parent (franchise) based on the child (film) in the relationship
+```
+curl -XGET 127.0.0.1:9200/series/_search?pretty -d '
+{
+    "query": {
+        "has_child": {
+            "type": "film",
+            "query": {
+                "match": {
+                    "title": "The Force Awakens"
+                }
+            }
+        }
+    }
+}'
+```
+* So essentialy ES has NoSQL DB schema with Relational capabilities based on the relationship we saw
+
+## Section 3: Searching with Elasticsearch
+
+### Lecture 28. "Query Lite" interface
+
+* 

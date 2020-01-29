@@ -390,4 +390,25 @@ curl -XPOST 127.0.0.1:9200/movies/_doc/20000/_update -d '
 
 ### Lecture 22. Dealing with Concurrency
 
-* 
+* concurrency is paramaount when multple clients hit the elasticsearch cluster moding data
+* ES handles it with optimistic concurrency control. much like the document version a sequence num is used
+* `_seq_no` is associated to the value and `_primary_term` to the sequence number
+* if both clients try to update a doc with the same sequence num only one will succeed
+* not that write requests go to the primary shards
+* client might silently retry if retry on conflict param is used. then he will get the doc with an incremented seq num 
+* we test
+```
+curl -XGET 127.0.0.1:9200/movies/_doc/109487?pretty
+```
+* we see that `"_seq_no" : 6`, and `"_primary_term" : 2,`
+* we will try to write in the same seq num to trigger the conflict
+```
+curl -XPUT "127.0.0.1:9200/movies/_doc/109487?if_seq_no=6&if_primary_term=2" -d '
+{
+    "genres": ["IMAX","Sci-Fi"],
+    "title":"Interstellar foo",
+    "year": 2014
+}'
+```
+* if it fails. get the seq number returned and try again
+* we can send 

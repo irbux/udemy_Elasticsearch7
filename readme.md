@@ -555,4 +555,91 @@ curl -XGET 127.0.0.1:9200/series/_search?pretty -d '
 
 ### Lecture 28. "Query Lite" interface
 
+* up to now we used full body JSON requests to elasticsearch backend
+* query lite is good for testing and does not use body. the query is complete in URL
+* eg if we want all movies with star in their titles `curl -XGET "127.0.0.1:9200/movies/_search?q=title:star&pretty"`
+* eg we want to search movies after 2010 and title containing the word trek `curl -XGET "127.0.0.1:9200/movies/_search?q=+year:>2010+title:trek&pretty"`
+* in query like syntax spaces etc need to be URL encoded, eg the above URL does not work because of + and > if we dont use quotes "" (eg in a browser) we need to URL encode them `curl -XGET 127.0.0.1:9200/movies/_search?q=%2Byear%3A%3E2010+%2Btitle%3Atrek`
+* Query lite should not be used in production. it can be dagerous
+    * cryptic and tough to debug
+    * can be a security issue if exposed to users
+    * fragile. even one wrong character can break it
+* Query lite is formally called URI search
+
+### Lecture 29. JSON Search In-Depth
+
+* Query DSL is the request body as JSON. we have seen that
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "match": {
+            "title": "Star Trek"
+        }
+    }
+}'
+```
+* filters ask a yes/no question of our data
+* queries return data in terms of relevance
+* filters are faster and cacheable
+* example of boolean query with a filter
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "bool": {
+            "must": { "term": { "title": "trek"}},
+            "filter": {"range": { "year": {"gte": 2010}}}
+        }
+    }
+}'
+```
+* the equivalnet od binary AND is "must" , "gte" is >
+* some types of filters all return boolean:
+    * term: filter by exact values `{"term": {"year":2014}}`
+    * terms: match if any exact values in a list match `{"terms":{"genre": ["Sci-Fi","Adventure"]}}`
+    * range: find numbers or dates in a given range (gt,gte,lt,lte) `{"range": { "year": {"gte": 2010}}}`
+    * exists: find documents wher a field exists `{"exists": {"field": "tags"}}`
+    * missing: find docs where a filed is missing `{"missing": {"field": "tags"}}`
+    * bool: combine filters with boolean logiv (must,must_not,should)
+* some types of queries:
+    * match_all: returns all documents and is the default. normally used with a filter `{"match_all": {}}`
+    * match: searches analyzed results such as full text search `{"match": { "title": "star"}}`
+    * multi_match: run the same query on multiple fileds `{"multi_match": {"query": "star","fileds": ["title","synopsis"]}}`
+    * bool: works like a boolean filter but results are scored by relevance
+* queries are wrapped in a "query": {} block
+* filters are wrapped in a "filter": {} block
+* we can combine them (see prev example)
+
+### Lecture 30. Phrase Matching
+
+* in ES to search for multiple terms placed in order "phrase" is easy using match_phrase
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "match_phrase":{
+            "title": "star wars"
+        }
+    }
+}'
+```
+* IDF in ES store also the order of terms thus enabling  phrase search
+* if we care about terms order but not if they are attached to each other we can use 'slop'
+* the slop represents how far we are willing to let a term  move to satisfy a phrase (in either direction). e.g 'quick brown fox' will match 'quick fox' with a slop of 1
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "match_phrase":{
+            "title": {"query": "star beyond", "slop": 1}
+        }
+    }
+}'
+```
+* our queries are sorted by relevance score.
+* just use a really high slop if you want to get any documents that contain the words in your phrase, but want docs with the eords closer together score higher
+
+### Lecture 31. [Exercise] Querying in Different Ways
+
 * 

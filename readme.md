@@ -642,4 +642,263 @@ curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
 
 ### Lecture 31. [Exercise] Querying in Different Ways
 
-* 
+* search for Star Wars movies released after 1980
+    * URI search (query lite)
+```
+curl -XGET "127.0.0.1:9200/movies/_search?q=+year:>1980+title:star%20wars&pretty"
+```
+    * we dont get correct results. we need to URL encode all special chars `curl -XGET "127.0.0.1:9200/movies/_search?q=%2Byear%3A%3E1980+%2Btitle%3Astar%20wars&pretty"`
+    * Query JSON body
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "bool": {
+            "must": {"match_phrase":{"title": "star wars"}},
+            "filter": {"range": { "year": {"gte": 1980}}}
+        }
+    }
+}'
+```
+
+### Lecture 32. Pagination
+
+* specify "from" and "size" to retrieve paginated results..
+* from is 0 based
+* URL style
+```
+curl -XGET "127.0.0.1:9200/movies/_search?size=2&from=2&pretty"
+```
+* or JSON body style w/ query
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "from": 2,
+    "size": 2,
+    "query": {"match":{"genre": "Sci-Fi"}}
+}'
+```
+* deep pagination can kill performance
+* every result must be retrieved,collated and sorted
+* enforce an uppoer bound on how many results will return to users
+* ommiting from implies 0
+
+### Lecture 33. Sorting
+
+* quite simple `curl -XGET '127.0.0.1:9200/movies/_search?sort=year&pretty'`
+* a string field that is analyzed for full-text search cant be used to sort documents
+* this is because it exists in the inverted index as individual terms, not as entire string
+* if we want to sort on an analyzed text field, we need to map a keyword copy, 
+* in the example below we have 2 copies of title field index one analyzed and one not for sorting
+* raw is a subfield like title.raw
+```
+curl -XPUT 127.0.0.1:9200/movies/ -d '
+{
+    "mappings": {
+        "properties": {
+            "title": {
+                "type": "text",
+                "fields": {
+                    "raw": {
+                        "type": "keyword"
+                    }
+                }
+            }
+        }
+    }
+}'
+```
+* with the new maping to sort on title we use `curl -XGET '127.0.0.1:9200/movies/_search?sort=title.raw&pretty'`
+* we cannot change the mapping on an existing index. we need to reindex
+
+### Lecture 34. More with Filters
+
+* a comlex filter query example (must be sci-fi, must not contain trek in title, must be between 2010 and 2015)
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d'
+{
+  "query": {
+      "bool": {
+          "must": {"match": {"genre": "Sci-Fi"}},
+          "must_not": {"match": {"title": "trek"}},
+          "filter": {"range": {"year": {"gte": 2010, "lt": 2015}}}
+      }
+  }
+}'
+```
+
+### Lecture 35. [Exercise] Using Filters
+
+* search for sci-fi movies before 1960, sorted by title
+```
+curl -XGET '127.0.0.1:9200/movies/_search?sort=title.raw&pretty' -d'
+{
+    "query": {
+        "bool": {
+            "must": {"match":{"genre": "Sci-Fi"}},
+            "filter": {"range": {"year": {"lt": 1960}}}
+        }
+    }
+}
+```
+
+### Lecture 36. Fuzzy Queries
+
+* Fuzzy matches is a way to account for typos and misspellings
+* the 'levenstein edit distance' accounts for:
+    * substitutions of characers (interstellar => instersteller)
+    * insertions of characters (intertellar => intersstellar)
+    * deletion of characters (interstellar => insterstelar)
+* all the above examples have an edit distance of 1
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d'
+{
+    "query": {
+        "fuzzy": {
+            "title": {
+                "value": "intrsteller","fuzziness": 2
+            }
+        }
+    }
+}'
+```
+* fuzziness: AUTO 
+    * 0 for 1-2 character strings
+    * 1 for 3-5 char strings
+    * 2 for anything else
+
+### Lecture 37. Partial Matching
+
+* Prefix queries
+    * it works with prefix queries on strings
+    * if we remapped 'year' as string we could query for 2010 - 2019 with
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "prefix": {
+            "year": "201"
+        }
+    }
+}'
+```
+
+* Wildcard queries
+    * use * as windcard
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "wildcard": {
+            "year": "1*"
+        }
+    }
+}'
+```
+* Regexp queries
+    * use "regexp" and a regular expression 
+
+* we delete and remap index to test
+```
+curl -XDELTE 127.0.0.1:9200/movies
+curl -XPUT 127.0.0.1:9200/movies -d '
+{
+      "mappings": {
+          "properties": {
+              "year": {
+                  "type": "text"
+              }
+          }
+      }
+}'
+curl -XPUT 127.0.0.1:9200/_bulk --data-binary @movies.json
+```
+
+### Lecture 38. Query-time Search As You Type
+
+* cool feat google search style
+* an easy way to do it is to abuse sloppines with prefix
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "match_phrase_prefix":{
+            "title": {"query": "star", "slop": 10}
+        }
+    }
+}'
+```
+
+### Lecture 39. N-Grams, Part 1
+
+* prefix is prefeed to be done at index time by building n-grams
+* this speeds up queries
+* "star":
+    * unigram: [s,t,a,r]
+    * bigram: [st,ta,ar]
+    * trigram: [sta,tar]
+    * 4-gram: [star]
+* edge n-grams are built only on the beginning of each term. they are very useful as we type start to end
+* * edge n-grams for star s,st,sta,star
+* if we treat our input in the search text box as n-gram we can match it agains our index
+* even 1 letter gets a match from unigram of star
+* create an autocomplete analyzer
+```
+curl -XPUT 127.0.0.1:9200/movies/?pretty -d '
+{
+  "settings": {
+    "analysis": {
+        "filter": {
+            "autocomplete_filter":{
+                "type": "edge_ngram",
+                "min_gram": 1,
+                "max_gram": 20
+            }
+        },
+        "analyzer": {
+            "autocomplete": {
+                "type": "custom",
+                "tokenizer": "standard",
+                "filter": {
+                    "lowercase",
+                    "autocomplete_filter"
+                }
+            }
+        }
+    }
+  }
+}'
+```
+* we use it in our index mapping at index time (we need to reindex)
+```
+curl -XPUT 127.0.0.1:9200/movies/_mapping?pretty -d '
+{
+    "properties": {
+        "title": {
+            "type": "text",
+            "analyzer": "autocomplete"
+        }
+    }
+}'
+```
+* our queries must be properly formated to use a standard analyzer NOT the autocomplete
+* we should use the n-grams only at index size otherwise tour query will also get split into ngrams and we ll get results for everything tha matches s,t,a,st,ta etc
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "match": {
+            "title": {
+                "query": "sta",
+                "analyzer": "standard"
+            }
+        }
+    }
+}'
+```
+* we can also upload a list of all possible completions ahead of time using 'completion suggesters'
+* this is also google style
+
+### Lecture 40. N-Grams, Part 2
+
+* reindex

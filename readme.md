@@ -902,3 +902,105 @@ curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
 ### Lecture 40. N-Grams, Part 2
 
 * reindex
+
+### Lecture 43. Importing Data with a Script
+
+* we can import data to ES from almost anything
+    * standalone scripts can submit bulk documents via RESTful API
+    * logstash and beats can stream data from logs, S3, databases, and more
+    * AWS systems can stream data via lambda or kinesis firehose
+    * kafka,spark and more frameworks have ES integration add-ons
+* importing data via script as json files
+* a python script can be used to:
+    * read in data from some distributed system (csv)
+    * transform data to JSON bulk inserts
+    * submit data to ES custer via HTTP/REST requests
+* our python script
+```
+import csv
+import re
+
+csvfile = open('ml-latest-small/movies.csv', 'r')
+
+reader = csv.DictReader( csvfile )
+for movie in reader:
+        print ("{ \"create\" : { \"_index\": \"movies\", \"_id\" : \"" , movie['movieId'], "\" } }", sep='')
+        title = re.sub(" \(.*\)$", "", re.sub('"','', movie['title']))
+        year = movie['title'][-5:-1]
+        if (not year.isdigit()):
+            year = "2016"
+        genres = movie['genres'].split('|')
+        print ("{ \"id\": \"", movie['movieId'], "\", \"title\": \"", title, "\", \"year\":", year, ", \"genre$
+        for genre in genres[:-1]:
+            print("\"", genre, "\",", end='', sep='')
+        print("\"", genres[-1], "\"", end = '', sep='')
+        print ("] }")
+```
+* we install unzip `sudo apt install unzip`
+* we get the dataset `wget http://files.grouplens.org/datasets/movielens/ml-latest-small.zip`
+* unzip the file `unzip ml-latest-small.zip`
+* we dl the python script `wget media.sundog-soft.com/es7/MoviesToJson.py` which builds the JSon file for import
+* we run it piping the print to a file `python3 MoviesToJson.py > moremovies.json`
+* we remove the index `curl -XDELETE 127.0.0.1:9200/movies`
+* we import the new dataset `curl -XPUT 127.0.0.1:9200/_bulk --data-binary @moremovies.json`
+* we search for a movie `curl -XGET "127.0.0.1:9200/movies/_search?q=mary%20poppins&pretty"`
+
+### Lecture 44. Importing with Client Libraries
+
+* using custom scripting is cryptic and hard
+* free ES client libs are available for any programming language
+    * java has a clinet maintained by elastic.co
+    * python has an ES package
+    * elasticsearch-ruby for ruby
+    * several choices for scalable
+    * elascisearch.pm for pearl
+* we will use again a python script but using the Python ES library
+* in this script we dont just build JSON, we read from csv, and interact with ES cluster to insert the data and issue gueries
+* python dictionaty is used.
+* we also do denormalization of data NoSQL style
+* in our ubuntu instance we have python3
+* we need pip to install the elasticsearch python package
+```
+sudo apt install python3-pip
+pip3 install elasticsearch
+```
+* we get the script `wget media.sundog-soft.com/es7/IndexRatings.py`
+```
+import csv
+from collections import deque
+import elasticsearch
+from elasticsearch import helpers
+
+def readMovies():
+    csvfile = open('ml-latest-small/movies.csv', 'r')
+    reader = csv.DictReader( csvfile )
+
+    titleLookup = {}
+
+    for movie in reader:
+        rating['title'] = titleLookup[line['movieId']]le']
+        rating['rating'] = float(line['rating'])
+    returating['timestamp'] = int(line['timestamp'])
+        yield rating
+def readRatings():
+    csvfile = open('ml-latest-small/ratings.csv', 'r')
+es = elasticsearch.Elasticsearch()
+    titleLookup = readMovies()
+es.indices.delete(index="ratings",ignore=404)
+deque(helpers.parallel_bulk(es,readRatings(),index="ratings"), maxlen=0)
+es.indices.refresh()er:
+        rating = {}
+        rating['user_id'] = int(line['userId'])
+        rating['movie_id'] = int(line['movieId'])
+        rating['title'] = titleLookup[line['movieId']]
+        rating['rating'] = float(line['rating'])
+        rating['timestamp'] = int(line['timestamp'])
+        yield rating
+
+
+es = elasticsearch.Elasticsearch()
+
+es.indices.delete(index="ratings",ignore=404)
+deque(helpers.parallel_bulk(es,readRatings(),index="ratings"), maxlen=0)
+es.indices.refresh()
+```

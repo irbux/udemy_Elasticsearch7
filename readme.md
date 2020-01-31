@@ -849,7 +849,7 @@ curl -XPUT 127.0.0.1:9200/movies/?pretty -d '
   "settings": {
     "analysis": {
         "filter": {
-            "autocomplete_filter":{
+            "autocomplete_filter": {
                 "type": "edge_ngram",
                 "min_gram": 1,
                 "max_gram": 20
@@ -859,10 +859,10 @@ curl -XPUT 127.0.0.1:9200/movies/?pretty -d '
             "autocomplete": {
                 "type": "custom",
                 "tokenizer": "standard",
-                "filter": {
+                "filter": [
                     "lowercase",
                     "autocomplete_filter"
-                }
+                ]
             }
         }
     }
@@ -901,4 +901,72 @@ curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
 
 ### Lecture 40. N-Grams, Part 2
 
-* reindex
+* delete index add analyzer
+```
+curl -XDELETE 127.0.0.1:9200/movies
+curl -XPUT 127.0.0.1:9200/movies/?pretty -d '
+{
+  "settings": {
+    "analysis": {
+        "filter": {
+            "autocomplete_filter": {
+                "type": "edge_ngram",
+                "min_gram": 1,
+                "max_gram": 20
+            }
+        },
+        "analyzer": {
+            "autocomplete": {
+                "type": "custom",
+                "tokenizer": "standard",
+                "filter": [
+                    "lowercase",
+                    "autocomplete_filter"
+                ]
+            }
+        }
+    }
+  }
+}'
+```
+* test the analyzer
+```
+curl -XGET 127.0.0.1:9200/movies/_analyze?pretty -d '
+{
+    "analyzer": "autocomplete",
+    "text": "Sta"
+}'
+```
+* we map the analyzer to the title field
+```
+curl -XPUT 127.0.0.1:9200/movies/_mapping?pretty -d '
+{
+    "properties": {
+        "title": {
+            "type": "text",
+            "analyzer": "autocomplete"
+        }
+    }
+}'
+```
+* load in the data `curl -XPUT 127.0.0.1:9200/_bulk --data-binary @movies.json`
+* do a query with the analyzer
+```
+curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
+{
+    "query": {
+        "match": {
+            "title": {
+                "query": "sta",
+                "analyzer": "standard"
+            }
+        }
+    }
+}'
+```
+
+## Section 4: Importing Data into your Index - Big or Small
+
+### Lecture 43. Importing Data with a Script
+
+8 

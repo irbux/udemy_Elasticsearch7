@@ -1037,22 +1037,23 @@ from elasticsearch import helpers
 
 def readMovies():
     csvfile = open('ml-latest-small/movies.csv', 'r')
+
     reader = csv.DictReader( csvfile )
 
     titleLookup = {}
 
     for movie in reader:
-        rating['title'] = titleLookup[line['movieId']]le']
-        rating['rating'] = float(line['rating'])
-    returating['timestamp'] = int(line['timestamp'])
-        yield rating
+            titleLookup[movie['movieId']] = movie['title']
+
+    return titleLookup
+
 def readRatings():
     csvfile = open('ml-latest-small/ratings.csv', 'r')
-es = elasticsearch.Elasticsearch()
+
     titleLookup = readMovies()
-es.indices.delete(index="ratings",ignore=404)
-deque(helpers.parallel_bulk(es,readRatings(),index="ratings"), maxlen=0)
-es.indices.refresh()er:
+
+    reader = csv.DictReader( csvfile )
+    for line in reader:
         rating = {}
         rating['user_id'] = int(line['userId'])
         rating['movie_id'] = int(line['movieId'])
@@ -1068,3 +1069,123 @@ es.indices.delete(index="ratings",ignore=404)
 deque(helpers.parallel_bulk(es,readRatings(),index="ratings"), maxlen=0)
 es.indices.refresh()
 ```
+* we run the script `python3 IndexRatings.py`
+* we fetch some docs `curl -XGET 127.0.0.1:9200/ratings/_search?pretty`
+
+### Lecture 45. [Exercise] Importing with a Script
+
+* write a python script to import the tags.csv data from ml-latest-small into a new "tags" index
+```
+import csv
+from collections import deque
+import elasticsearch
+from elasticsearch import helpers
+
+def readMovies():
+    csvfile = open('ml-latest-small/movies.csv', 'r')
+
+    reader = csv.DictReader( csvfile )
+
+    titleLookup = {}
+
+    for movie in reader:
+            titleLookup[movie['movieId']] = movie['title']
+
+    return titleLookup
+
+def readTags():
+    csvfile = open('ml-latest-small/tags.csv', 'r')
+
+    titleLookup = readMovies()
+
+    reader = csv.DictReader( csvfile )
+    for line in reader:
+        tag = {}
+        tag['user_id'] = int(line['userId'])
+        tag['movie_id'] = int(line['movieId'])
+        tag['title'] = titleLookup[line['movieId']]
+        tag['tag'] = line['tag']
+        tag['timestamp'] = int(line['timestamp'])
+        yield tag
+
+
+es = elasticsearch.Elasticsearch()
+
+es.indices.delete(index="tags",ignore=404)
+deque(helpers.parallel_bulk(es,readTags(),index="tags"), maxlen=0)
+es.indices.refresh()
+```
+* we save it as IndexTags.py and run it `python3 `
+* we test `curl -XGET 127.0.0.1:9200/tags/_search?pretty`
+
+### Lecture 46. Introducing Logstash
+
+* logstash can get data from various sources: files, s3, beats, kafka
+* logstash can insert data to: elasticsearch, aws, hadoop, mongodb
+* it supports multiple inputs and multiple outputs
+* logstash parses, transforms, and filters data as it passes them through
+* it can derive structure from unstructured data
+* it can anonymize personal data or exclude it entirely
+* it can do geolocation lookups
+* it can scale across many nodes
+* it guarantees at-least-once delivery
+* it absorbs throughput from load spikes
+* can see the [logstash filter plugins list](https://www.elastic.co/guide/en/logstash/current/filter-plugins.html)
+* logstash can listen to a huge variety of input source events and a huge variety of stash destinations
+* typical use case in ELK stack: web logs (beats) OR file => Logstash (parse data into structuered fields, geolocate) => elasticsearch
+
+### Lecture 47. Installing Logstash
+
+* we get the apache access.log `wget media.sundog-soft.com/es/access_log`
+* we install the jdk `sudo apt install openjdk-8-jre-headless`
+* assuming we have the ES repo added we install logstash `sudo apt-get update && sudo apt-get install logstash`
+* we need to add a configuration file `sudo vi /etc/logstash/conf.d/logstash.conf` or `sudo nano /etc/logstash/conf.d/logstash.conf`
+```
+input {
+    file {
+        path => "/home/ubuntu/access_log"
+        start_position => "beginning"
+    }
+}
+
+filter {
+    grok {
+        match => {"message" => "%{COMBINEDAPACHELOG}"}
+    }
+    date {
+        match => ["timestamp","dd/MMM/yyyy:HH:mm:ss Z"]
+    }
+}
+
+output {
+    elasticsearch {
+        hosts => ["localhost:9200"]
+    }
+    stdout {
+        codec => rubydebug
+    }
+}
+```
+* the above config file
+    * it tells logstash where to find its input data
+    * setting beginning it will process file from beginning. default behaviour is to tail it
+    * filter block tells logstash how to extract structured data out of the log (uses a inbuild plugin for apache logs)
+    * output sends it to elacticsearch and to stdout
+
+### Lecture 48. Running Logstash
+
+* we cd into the dir and run the binary using the config file
+```
+cd /usr/share/logstash/
+sudo bin/logstash -f /etc/logstash/conf.d/logstash.conf
+```
+* we see the output of the data load
+* once the log stops we ctrl+c to stop as it will wait for new lines in log file to parse
+* we want to see the ES indices created by the log parsing `curl -XGET 127.0.0.1:9200/_cat/indices?v`
+* logstash index is 'logstash-2020.01.31-000001' as it is date based...
+* we get the docs `curl -XGET "127.0.0.1:9200/logstash-2020.01.31-000001/_search?pretty"`
+
+### Lecture 49. Logstash and MySQL, Part 1
+
+* we will use logstash to extract and feed data from a MySQL DB table
+* we need a JDBC connector for mySQL `wget https://dev.mysql.com/get/Doonloads/Connector-J/mysql-connector-java-8.0.15.zip`

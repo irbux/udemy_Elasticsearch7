@@ -1188,4 +1188,141 @@ sudo bin/logstash -f /etc/logstash/conf.d/logstash.conf
 ### Lecture 49. Logstash and MySQL, Part 1
 
 * we will use logstash to extract and feed data from a MySQL DB table
+* first we update system `sudo apt-get update`
+* then install mysql `sudo apt-get install mysql-server`
+* we download movielens data. `wget http://files.grouplens.org/datasets/movielens/ml-100k.zip`
+* unzip data `unzip ml-100k.zip`
+* we connect to db `sudo mysql -u root -p`
+* in mysqll console
+    * we create a DB `CREATE DATABASE movielens;`
+    * we create a table `CREATE TABLE movielens.movies ( movieID INT PRIMARY KEY NOT NULL, title TEXT, releaseDate DATE);`
+    * we load data to the table `LOAD DATA LOCAL INFILE 'ml-100k/u.item' INTO TABLE movielens.movies FIELDS TERMINATED BY '|' (movieID, title, @var3) set releaseDate = STR_TO_DATE(@var3, '%d-%M-%Y');`
+    * we go to db `use movielens;`
+    * issue a simple query `SELECT * FROM movies WHERE title LIKE 'Star%';`
+    * exit mysql `exit`
+
+### Lecture 50. Logstash and MySQL, Part 2
+
 * we need a JDBC connector for mySQL `wget https://dev.mysql.com/get/Doonloads/Connector-J/mysql-connector-java-8.0.15.zip`
+* then unzip it `unzip mysql-connector-java-8.0.15.zip`
+* we need to configure logstash to use jdbc adding the `sudo nano /etc/logstash/conf.d/mysql.conf` file adding the credentials to connect to DB
+```
+input {
+    jdbc {
+        jdbc_connection_string => "jdbc:mysql://localhost:3306/movielens"
+        jdbc_user => "ubuntu"
+        jdbc_password => "password"
+        jdbc_driver_library => "/home/ubuntu/mysql-connector-java-8.0.15/mysql-connector-java-8.0.15.jar"
+        jdbc_driver_class => "com.mysql.jdbc.Driver"
+        statement => "SELECT * FROM movies"
+    }
+}
+
+output {
+    stdout { codec => json_lines }
+    elasticsearch {
+        hosts => ["localhost:9200"]
+        index => "movielens-sql"
+    }
+}
+```
+* we connect to the mysql to add the user we set in config `sudo mysql -u root -p`
+* add user `CREATE USER 'ubuntu'@'localhost' IDENTIFIED BY 'password';`
+* grant permissions `GRANT ALL PRIVILEGES ON *.* TO 'ubuntu'@'localhost';`
+* apply privileges `FLUSH PRIVILEGES;` and `quit`
+* we cd to logstash bin `cd /usr/share/logstash` 
+* and run it using config `sudo bin/logstash -f /etc/logstash/conf.d/mysql.conf` 
+* test the data entry searching in elasticsearch `curl -XGET '127.0.0.1:9200/movielens-sql/_search?q=title:Star&pretty'`
+
+### Lecture 51. Logstash and S3
+
+* AWS S3 (Amazon Web Services Simple STorage Service) is a cloud based distributed storage system
+* to set logstash to use data from S3 we need to config its input as
+```
+input {
+    s3 {
+        bucket => 'sundog-es'
+        access_key_id => "AKIAIS****C26Y***Q"
+        secret_access_key => "d*****FENOXcCuNC4iTbSLbibA*****eyn****"
+    }
+}
+```
+* we need to spec the bucket name and the access keys
+* we upload there the access-log as `acces-log.txt`
+* we use IAM fr securing S3 bucket
+* we set a user with AmazonS3ReadOnlyAccess rights
+* we create security credentials for the user (access-key and secret access key)
+* as we are using the same apache access log we mod the `/etc/logstash/conf.d/logstash.conf` file replacing the input part... filter and output are the same
+* and the logstash run command
+
+### Lecture 52. Elasticsearch and Kafka, Part 1
+
+* apache kafka
+    * an open source stream processing platorm
+    * hight throughput - low latency
+    * publish / subscribe
+    * process streams
+    * store streams
+
+* many things in common with logstash
+* getting data from kafka to ES with logstash is as simple as adding the right input config part in the config file used by logstash e.g
+```
+input {
+    kafka {
+        bootstrap_servers => "localhost:9092"
+        topics => ["kafka-logs"]
+    }
+}
+```
+* a topic is a kafka channel
+* we setup kafka on our host
+* install zookeeper `sudo apt-get install zookeeperd`
+* we get kafka installation file on home dir `wget http://www.trieuvan.com/apache/kafka/2.2.0/kafka_2.12-2.2.0.tgz`
+* we uncompress `tar -xvf kafka_2.12-2.2.0.tgz`
+* we cd in kafka dir `cd kafka_2.12-2.2.0` and start the server `sudo bin/kafka-server-start.sh config/server.properties`
+with kafka running we open a new terminal and cd to kafka to create a new topic `sudo bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic kafka-logs`
+* replication and partition is 1 as our kafka cluster has 1 node
+
+### Lecture 53. Elasticsearch and Kafka, Part 2
+
+* with the kafka stream ready we need to config logstash to listen for this stream `sudo nano /etc/logstash/conf.d/logstash.conf`
+```
+input {
+    kafka {
+        bootstrap_servers => "localhost:9092"
+        topics => ["kafka-logs"]
+    }
+}
+
+filter {
+    grok {
+        match => {"message" => "%{COMBINEDAPACHELOG}"}
+    }
+    date {
+        match => ["timestamp","dd/MMM/yyyy:HH:mm:ss Z"]
+    }
+}
+
+output {
+    elasticsearch {
+        hosts => ["localhost:9200"]
+        index => "kafka-logs"
+    }
+    stdout {
+        codec => rubydebug
+    }
+}
+```
+
+* we cd to logstash bin `cd /usr/share/logstash` 
+* and run it using config `sudo bin/logstash -f /etc/logstash/conf.d/logstash.conf` 
+* kafka server is ready and listening and logstash is listening to the stream to stream it to elasticsearch
+* when we publish data to the kafka topic they will inserted to elasticsearch
+* we open a 3rd terminal to publish to kafka
+* we cd to kafka `cd kafka_2.12-2.2.0/`
+* we publish the access-log file into kafka-logs topic using the console producer tool `sudo bin/kafka-console-producer.sh --broker-list localhost:9092 --topic kafka-logs < ../access_log`
+* we test with `curl -XGET '127.0.0.1:9200/kafka-logs/_search?pretty'`
+
+### Lecture 54. Elasticsearch and Apache Spark, Part 1
+
+* 

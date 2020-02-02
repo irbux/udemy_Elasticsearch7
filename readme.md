@@ -1345,22 +1345,509 @@ output {
 ### Lecture 55. Elasticsearch and Apache Spark, Part 2
 
 * spark is up and running and we see the scala prompt
-
-
+* our commands are in scala
+* in the command promt we explicitly import the package `import org.elasticsearch.spark.sql._`
+* we create a Person class to store the data for each user `case class Person(ID:Int,name:String,age:Int,numFriends:Int)`
+* we add a mapper scala function to take a line from the csv file and convert it to Person object
 ```
-import org.elasticsearch.spark.sql._
-
-case class Person(ID:int,name:String,age:int,numFriends:int)
-
 def mapper(line:String): Person = {
-    val fileds = line.split(',')
-    val person:Person = Person(fields(0).toInt,fileds(1),fields(2).toInt,fields(3).toInt)
+    val fields = line.split(',')
+    val person:Person = Person(fields(0).toInt,fields(1),fields(2).toInt,fields(3).toInt)
     return person
 }
-
-import spark.implicits._
-val lines = spark.sparkContext.textFile("fakefriends.csv")
-val people = lines.map(mapper).toDF()
-
-people.saveToEs("spark-people")
 ```
+* load csv file 
+* we `import spark.implicits._` to use  alib to convert data to dataframe objects
+* we load the csv to a lines obj `val lines = spark.sparkContext.textFile("fakefriends.csv")`
+* not that our code is not executed... we are merely building a graph for later execution..
+* we convert lines to people `val people = lines.map(mapper).toDF()`
+* we load the data to ES `people.saveToEs("spark-friends")`
+* exit shell `:quit` and test `curl -XGET 127.0.0.1:9200/spark-friends/_search?pretty`
+* IT WORKSSS
+
+### Lecture 56. [Exercise] Importing Data with Spark
+
+* write spark code that imports movie ratings from ml-latest-small into a "ratings" index in ES
+* note that we have a header Row we need to delete
+```
+val header = lines.first()
+val data = lines.filter(row => row != header)
+```
+* fire up spark with the pluginm
+```
+import org.elasticsearch.spark.sql._
+case class Rating(userI:Int,movieId:Int,rating:Float,timestamp:Int)
+def mapper(line:String): Rating = {
+    val fields = line.split(',')
+    val rating:Rating = Rating(fields(0).toInt,fields(1).toInt,fields(2).toFloat,fields(3).toInt)
+    return rating
+}
+import spark.implicits._
+val lines = spark.sparkContext.textFile("ml-latest-small/ratings.csv")
+val header = lines.first()
+val data = lines.filter(row => row != header)
+val ratings = data.map(mapper).toDF()
+ratings.saveToEs("ratings")
+:quit
+```
+
+* test `curl -XGET 127.0.0.1:9200/ratings/_search?pretty`
+
+## Section 5: Aggregation
+
+### Lecture 58. Section 5 Intro
+
+* ES is very powerful in analyzing big data... much more than hadoop
+* the key to analyze data in ES is aggregations
+
+### Lecture 59. Aggregations, Buckets, and Metrics
+
+* in most orgs ES is used more for aggregations than searching in big data
+* ES cluster can be used to do data analytics
+    * metrics (average, stats, min/max, percentiles. etc)
+    * buckets (histograms, ranges, distances, significant terms)
+    * pipelines (moving average, average bucket, cumulative sum)
+    * matrix (matrix stats)
+* ES aggregations can sometimes take the place of hadoop / spark / etc because it returns results much faster
+* we can even nest aggregations together or pair them with search queries
+* say we want to bucket the movielens docs by rating value
+* in the example
+```
+curl -XGET '127.0.0.1:9200/ratings/_search?size=0&pretty' -d '
+{
+    "aggs": {
+        "ratings": {
+            "terms": {
+                "field": "rating"
+            }
+        }
+    }
+}'
+```
+* in this example we bucket all the movies in movielens dataset by the rating value
+* size=0 means we dont want back the query results only the aggregations
+* we create an aggregation called ratings that aggregates on the rating field term
+* in a nutshell it sums up all documents that have the same rating value
+* it can be used then to build a histogram
+* in the following example
+```
+curl -XGET '127.0.0.1:9200/ratings/_search?size=0&pretty' -d '
+{
+    "query": {
+        "match": {
+            "rating": 5.0
+        }
+    },
+    "aggs": {
+        "ratings": {
+            "terms": {
+                "field": "rating"
+            }
+        }
+    }
+}'
+```
+* here we count only the 5 star rated ratings
+* in the example below we get the average rating for the movie that matches the phrase Star Wars Episode IV
+```
+curl -XGET '127.0.0.1:9200/ratings/_search?size=0&pretty' -d '
+{
+    "query": {
+        "match_phrase": {
+            "title": "Star Wars Episode IV"
+        }
+    },
+    "aggs": {
+        "avg_rating": {
+            "avg": {
+                "field": "rating"
+            }
+        }
+    }
+}'
+```
+* we will use the ratings index we imported from spark
+* we try first example we get back JSON with doc counts for each rating in a bucket array
+
+```
+{
+  "took" : 76,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 10000,
+      "relation" : "gte"
+    },
+    "max_score" : null,
+    "hits" : [ ]
+  },
+  "aggregations" : {
+    "ratings" : {
+      "doc_count_error_upper_bound" : 0,
+      "sum_other_doc_count" : 0,
+      "buckets" : [
+        {
+          "key" : 4.0,
+          "doc_count" : 53636
+        },
+        {
+          "key" : 3.0,
+          "doc_count" : 40094
+        },
+        {
+          "key" : 5.0,
+          "doc_count" : 26422
+        },
+....................
+```
+* in the second example we get as reply
+```
+{
+  "took" : 3,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 10000,
+      "relation" : "gte"
+    },
+    "max_score" : null,
+    "hits" : [ ]
+  },
+  "aggregations" : {
+    "ratings" : {
+      "doc_count_error_upper_bound" : 0,
+      "sum_other_doc_count" : 0,
+      "buckets" : [
+        {
+          "key" : 5.0,
+          "doc_count" : 26422
+        }
+      ]
+    }
+  }
+}
+```
+* it takes 3ms.....
+* the reply for the 3rd example is
+```
+{
+  "took" : 52,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 251,
+      "relation" : "eq"
+    },
+    "max_score" : null,
+    "hits" : [ ]
+  },
+  "aggregations" : {
+    "avg_rating" : {
+      "value" : 4.231075697211155
+    }
+  }
+}
+```
+
+### Lecture 60. Histograms
+
+* with aggregations we can very quickly create histograms
+* histograms: display totals of documents bucketed by some internal range
+* in example if we want to display ratings totals bucketed by 1.0-rating intervals
+```
+curl -XGET '127.0.0.1:9200/ratings/_search?size=0&pretty' -d'
+{
+    "aggs": {
+        "whole_ratings": {
+            "histogram": {
+                "field": "rating",
+                "interval": 1.0
+            }
+        }
+    }
+}'
+```
+* histogram is the type of aggregation
+* another example is crating a histogram with movies released in each decade
+```
+curl -XGET '127.0.0.1:9200/movies/_search?size=0&pretty' -d '
+{
+    "aggs": {
+        "release": {
+            "histogram": {
+                "field": "year",
+                "interval": 10
+
+            }
+        }
+    }
+}'
+```
+* we get back same style replies with buckets with doc counts
+
+### Lecture 61. Time Series
+
+* a server log is a time series data as they are timestamped
+* ES can bucket and aggregate fields that contain time and dates properly. We can aggregate by month or year and it knows about calendar rules
+* an example of how to breakdown website hits by hour (access logs we streamed with kafka)
+```
+curl -XGET '127.0.0.1:9200/kafka-logs/_search?size=0&pretty' -d '
+{
+    "aggs": {
+        "timestamp": {
+            "date_histogram": {
+                "field": "@timestamp",
+                "interval": "hour"
+            }
+        }
+    }
+}'
+```
+* the type is date-histogram by hour
+* what we get is a doc count of events per hour
+```
+{
+  "took" : 42,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 10000,
+      "relation" : "gte"
+    },
+    "max_score" : null,
+    "hits" : [ ]
+  },
+  "aggregations" : {
+    "timestamp" : {
+      "buckets" : [
+        {
+          "key_as_string" : "2017-04-30T04:00:00.000Z",
+          "key" : 1493524800000,
+          "doc_count" : 225
+        },
+        {
+          "key_as_string" : "2017-04-30T05:00:00.000Z",
+          "key" : 1493528400000,
+          "doc_count" : 375
+        },
+...............
+```
+
+*  another example is the same aggregation but with a query before to filter events. is the traffic that Googlebots creates to our site when it does scraping....
+```
+curl -XGET '127.0.0.1:9200/kafka-logs/_search?size=0&pretty' -d '
+{
+    "query": {
+        "match": {
+            "agent": "Googlebot"
+        }
+    },
+    "aggs": {
+        "timestamp": {
+            "date_histogram": {
+                "field": "@timestamp",
+                "interval": "hour"
+            }
+        }
+    }
+}'
+```
+
+### Lecture 62. [Exercise] Generating Histogram Data
+
+* when did my site went down on May 5 2017??? 
+* bucket 500 status codes by the minute in kafka logs
+```
+curl -XGET '127.0.0.1:9200/kafka-logs/_search?size=0&pretty' -d '
+{
+    "query": {
+        "match": {
+            "response": "500"
+        }
+    },
+    "aggs": {
+        "timestamp": {
+            "date_histogram": {
+                "field": "@timestamp",
+                "interval": "minute"
+            }
+        }
+    }
+}'
+```
+* we see it in reply
+```
+        {
+          "key_as_string" : "2017-05-05T11:19:00.000Z",
+          "key" : 1493983140000,
+          "doc_count" : 55
+        },
+
+```
+
+### Lecture 63. Nested Aggregations, Part 1
+
+* aggregations can be nested for more powerful queries
+* eg whats the average rating for each Star Wars movie?
+we will undertake this task as an acttivity to show what can go wrong along the way
+* when we aggregate on text fields many things can go wrong
+* we want to get the average rating of each individual star wars film
+* the complete query is
+```
+curl -XGET '127.0.0.1:9200/ratings/_search?size=0&pretty' -d '
+{
+    "query": {
+        "match_phrase": {
+            "title": "Star Wars"
+        }
+    },
+    "aggs": {
+        "titles": {
+            "terms": {
+                "field": "title"
+            },
+            "aggs": {
+                "avg_rating": {
+                    "avg": {
+                        "field": "rating"
+                    }
+                }
+            }
+        }
+    }
+}'
+```
+* first we get all star wars movies with the query
+* we will aggregate on the query results based on raw title
+* next we will nest an aggregation to get the average ratings for each
+* note that the query result is all ratings for movieswith star wars in title
+* the first aggregation buckets these ratings per raw title.
+* the on those buckets we chain the second aggregation to get the avg ratings
+
+### Lecture 64. Nested Aggregations, Part 2
+
+* we run it and it does not work. what we get back is 
+```
+{
+  "error" : {
+    "root_cause" : [
+      {
+        "type" : "illegal_argument_exception",
+        "reason" : "Fielddata is disabled on text fields by default. Set fielddata=true on [title] in order to load fielddata in memory by uninverting the inverted index. Note that this can however use significant memory. Alternatively use a keyword field instead."
+      }
+    ],
+..............
+```
+* we cannot aggregate on a stragit analyzed text field
+* we follow advice and enable fielddata on title field... we dont even have to do reindexing for this
+```
+curl -XPUT '127.0.0.1:9200/ratings/_mapping?pretty' -d '
+{
+    "properties": {
+        "title": {
+            "type":"text",
+            "fielddata": true
+        }
+    }
+}'
+```
+* we rerun the query but the results are wrong...
+* we get avg ratings for docs that contain a term of the title...
+* if we had type keyword... it would work but we need to reindex and reload
+* we aso do it on a subfield..
+```
+curl -XDELETE 127.0.0.1:9200/ratings
+curl -XPUT 127.0.0.1:9200/ratings/ -d '
+{
+    "mappings": {
+        "properties": {
+            "title": {
+                "type": "text",
+                "fielddata": true,
+                "fields": {
+                    "raw": {
+                        "type": "keyword"
+                    }
+                }
+            }
+        }
+    }
+}'
+```
+* we mod the IndexRating.py xcript as we dont need to delete the index `#es.indices.delete(index="ratings",ignore=404)`
+* we load data `python3 IndexRatings.py`
+* we rerun the query chanding the filed from title to title.raw as it is keyword type
+```
+curl -XGET '127.0.0.1:9200/ratings/_search?size=0&pretty' -d '
+{
+    "query": {
+        "match_phrase": {
+            "title": "Star Wars"
+        }
+    },
+    "aggs": {
+        "titles": {
+            "terms": {
+                "field": "title.raw"
+            },
+            "aggs": {
+                "avg_rating": {
+                    "avg": {
+                        "field": "rating"
+                    }
+                }
+            }
+        }
+    }
+}'
+```
+* 18 F...... ms to run...
+
+## Section 6: Using Kibana
+
+### Lecture 67. Installing Kibana
+
+* Kibana is a web ui that uses ES aggregations agains the ES cluster indices to show nice visualizations
+* to install it on the host
+```
+sudo apt-get install kibana
+sudo nano /etc/kibana/kibana.yml
+```
+* change server host to 0.0.0.0
+* run it
+```
+sudo /bin/systemctl daemon-reload
+sudo /bin/systemctl enable kibana.service
+sudo /bin/systemctl start kibana.service
+```
+* Kibana is now available on port 5601
+* service now will start when we start our vm
+* we hot it externaly on <vmip>:5601 in a browser
+
+### Lecture 68. Playing with Kibana
+
+* we will analyze the works of Shakespeare.. why??? because we can...

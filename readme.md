@@ -1325,4 +1325,42 @@ output {
 
 ### Lecture 54. Elasticsearch and Apache Spark, Part 1
 
-* 
+* Apache Spark
+    * a fast and general engine for large scale data processing
+    * a faster alternative to mapreduce
+    * spark apps are written in java,scala,python or r
+    * supports SQL, streaming, machine learning and graph processsing
+    * usually runs on hadoop cluster
+* we will install apache spark and write a script to show integration with elasticsearch
+* the script will read a csv convert it to a dataframe and load it to ES
+* to do it we need a spark addon package 'elasticsearch-spark-20' `./spark-2.4.2-bin-hadoop2.7/bin/spark-shell --packages org.elasticsearch:elasticsearch-spark-20_2.11:7.0.1`
+*  first we need to install [spark](https://spark.apache.org) and download spark.
+* dont get latest version. it must support the scala version used in the package `wget https://archive.apache.org/dist/spark/spark-2.3.3/spark-2.3.3-bin-hadoop2.7.tgz`
+* decompress `tar -xvf spark-2.3.3-bin-hadoop2.7.tgz`
+* next we need to install the spark-es integration package. go to [maven repo](https://mvnrepository.com/search?q=elasticsearch)
+* we need 'Elasticsearch Spark (for Spark 2.X)' see the compatibility notes
+* first we get a fake data csv `wget https://raw.githubusercontent.com/PacktPublishing/Frank-Kanes-Taming-Big-Data-with-Apache-Spark-and-Python/master/fakefriends.csv`
+* we run spark passing in the es package `./spark-2.3.3-bin-hadoop2.7/bin/spark-shell --packages org.elasticsearch:elasticsearch-spark-20_2.11:7.0.1`
+
+### Lecture 55. Elasticsearch and Apache Spark, Part 2
+
+* spark is up and running and we see the scala prompt
+
+
+```
+import org.elasticsearch.spark.sql._
+
+case class Person(ID:int,name:String,age:int,numFriends:int)
+
+def mapper(line:String): Person = {
+    val fileds = line.split(',')
+    val person:Person = Person(fields(0).toInt,fileds(1),fields(2).toInt,fields(3).toInt)
+    return person
+}
+
+import spark.implicits._
+val lines = spark.sparkContext.textFile("fakefriends.csv")
+val people = lines.map(mapper).toDF()
+
+people.saveToEs("spark-people")
+```

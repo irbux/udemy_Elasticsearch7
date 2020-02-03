@@ -1900,13 +1900,246 @@ cd /etc/filebeat/modules.d
 sudo mv apache.yml.disabled apache.yml
 sudo nano apahe.yml
 ```
-* add in file
+* in this dir there are a lot of sample config files for beats to get data from sources
+* add in file the following in var.paths (uncomment them) for access and error
 ```
-["home/ubuntu/logs/access"]
-["home/ubuntu/logs/error"]
+["home/ubuntu/logs/access*"]
+["home/ubuntu/logs/error*"]
 ```
 * run flebeats
 ```
 sudo /bin/systemctl start filebeat.service
 ```
 * the apache access_log will be consumed by filebeat and passed in elasticsearch (no logstash in between)
+* we check the indices created in ES `curl -XGET 127.0.0.1:9200/_cat/indices?v`
+
+### Lecture 75. Analyzing Logs with Kibana Dashboards
+
+* filebeat comes with dashboards.. we can see them in kibana
+* we need to install these visualization in kibana
+```
+cd /usr/share/filebeat/bin
+sudo filebeat setup --dashboards
+```
+* we need to restart kibana to take changes
+```
+sudo /bin/systemctl stop kibana.service
+sudo /bin/systemctl start kibana.service
+```
+* refresh kibana in browser (after some mins)
+* we need to setup an index pattern in settings index patterns we see filebeat in the list
+* go to discovery and change source to filebeat. it shows last 15 mins of log. set absolute datas around start of may 2017 and hit update
+* we see a traffic histogram
+* we add a filter for field http.response.status_code  is and val 500
+* we click and check source of requests
+* in menu we click dashboard and click on apache access and error logs
+* its a very neat dashboard
+
+### Lecture 76. [Exercise] Log analysis with Kibana
+
+* between 9:30 -10:00 AM on MAy 4 2017, whic cities were generating 404 errors?
+
+* kansas city
+
+## Section 8: Elasticsearch Operations and SQL Support
+
+### Lecture 79. Choosing the Right Number of Shards
+
+* a major decision is the number of shards as we cannot change it later on
+* the number of shards per node is dictated by the amount of ram
+* the scarce resource are primary shards as they take the load of write 
+* in intensive load operations (many logs) primary shards are valuable and we cannot scale them after
+* we cannot add more shards later without reindexing
+* shards do not come free. big overhead from lucene
+* we should scale out in pahses so we have time to reindex before we hit the next phase. make a copy => reindex => use new one
+* the right number of shards depends on our data and our application
+* start with one server using the same hardware we use in production with one shard and no replication
+* fill it with real docs and hit it with real queries
+* push it to the limit until it breaks. now we know the capacity of a shard
+* read heavy apps can add more replicas without reindexing
+* this helps if we put the new replicas on new hardware
+
+### Lecture 80. Adding Indices as a Scaling Strategy
+
+* how to spec the num of primary and replica shards on a new index
+```
+PUT /new_index
+{
+    "settings": {
+        "number_of_shards": 10,
+        "number_of_replicas: 1,
+    }
+}
+```
+* total of 20 shards
+* we can use index templates to automatically apply mappings, analyzers, aliases etc
+* we use kibana instead of console to create a new index
+* we can check the sttings of an existing index with `GET /shakespeare/_settings` the default is 1 primary 1 replica
+* we create a new index
+```
+PUT /testindex
+{
+    "settings": {
+        "number_of_shards": 3,
+        "number_of_replicas": 1
+    }  
+}
+```
+
+### Lecture 81. Index Alias Rotation
+
+
+* multiple indices as a scaling strategy
+* make a new index to hold new data
+* search both inidces
+* use index aliases to make this easy to do
+* with time based data, you can have one index per time frame
+common strategy fo long data where you usually just want current data, but dont wait to delete old data either
+* again we can use index aliases, ie "logs_current", "last_3_months", to point to specific indices as they rotate
+```
+POST /_aliaces
+{
+    "actions": [
+        {"add": {"alias": "logs_current", "index": "logs_2017_06"}},
+        {"remove": {"alias": "logs_current", "index": "logs_2017_05"}},
+        {"add": {"alias": "logs_last_3_months", "index": "logs_2017_06"}},
+        {"remove": {"alias": "logs_last_3_months", "index": "logs_2017_03"}}
+    ]
+}
+# optionally
+DELETE /logs_2027_03
+```
+* adding indexes for same data increases capacity
+
+### Lecture 82. Index Lifecycle Management
+
+* we can control how we handle indexes as they age by applying lifecycle policies
+* Hot (actively updated and queried)
+* Warm (not updated but queried)
+* Cold (infrequently queried) => e.g move to less expensive HW
+* Delete (delete for compliance)
+* trigger events can be shard size or82. Index Lifecycle Managementerformance
+* an example lifecycle policy
+```
+PUT _ilm/policy/datastream_policy
+{
+    "policy": {
+        "phases": {
+            "hot": {
+                "actions": {
+                    "rollover": {
+                        "max_size": "50GB",
+                        "max_age": "30d"
+                    }
+                }
+            },
+            "delete": {
+                "min_age": "90d",
+                "actions": {
+                    "delete": {}
+                }
+            }
+        }
+    }
+}
+```
+* in the example we have only 2 states hot and delete. when we reach 50GB or 30d we move to delete state. data remain there till 90d when they are deleted
+* to apply this polycy to an index we use an index template
+```
+PUT _template/datastream_template
+{
+    "index_patterns": ["datastream-*"],
+    "settings": {
+        "number_of_shards": 1,
+        "number_of_replicas": 1,
+        "index.lifecycle.name": "datastream_policy",
+        "index.lifecycle.rollover_alias":"datastream"
+    }
+}
+```
+* also rollover policy is aliased in the template
+
+### Lecture 83. Choosing your Cluster's Hardware
+
+* RAM is the bottleneck...
+* 64GB per machine is the sweet spot. 32GB to elasticsearch, 32GB to the OS / disk cache for lucene)
+* under 8GB of RAM is not recommended
+* over 32GB of RAM for ES is not recommended (long pointers to mem )
+* fastest disks are better - SSD's if possible (with deadline or noop io scheduler)
+* use RAID0 - cluster is already redundant
+* cpu not that important
+* need a fast network
+* dont use NAS
+* use medium to large configurations. too big is bad. too many small boxes is bad too
+
+### Lecture 84. Heap Sizing
+
+* default heap size is only 1GB!
+* half or less of our physical memory should be allocated to elasticsearch
+    * the other half can be used by lucene for caching
+    * if we are not aggregating on analyzed string fields, consider using less than half for elasticsearch
+    * smaller  heaps result in faster garbage collection and more memory for caching
+```
+export ES_HEAP_SIZE=10g
+# or
+ES_JAVA_OPTS="-Xms10g -Xmx10g" ./bin/elsticsearch
+```
+* dont cross 32GB! pointers blow up then
+
+### Lecture 85. Monitoring
+
+* what is X-Pack
+    * formerly an ES extension, now included by default
+    * security, monitoring, alerting, reporting, graph, and machine learning
+    * formerly shield / watcher / marvel
+    * only parts can be had free-requires a paid licence or trial otherwise
+* we fire up Monitoring Stack in kibana
+* click turn on self monitoring
+
+### Lecture 86. Elasticsearch SQL
+
+* we can post SQL queries to elasticsearch using xpack
+```
+curl -XPOST 127.0.0.1:9200/_xpack/sql?pretty -d '
+{
+    "query": "DESCRIBE movies"
+}'
+```
+* we get the movies index as a table
+* we can set ?format=txt instead of pretty to see it as table
+* we post a select  query to get data
+```
+curl -XPOST 127.0.0.1:9200/_xpack/sql?format=txt -d '
+{
+    "query": "SELECT title FROM movies LIMIT 10"
+}'
+```
+* we get fancy with more complex SQL queries
+```
+curl -XPOST 127.0.0.1:9200/_xpack/sql?format=txt -d '
+{
+    "query": "SELECT title,year FROM movies WHERE year < 1920 ORDER BY year"
+}'
+```
+* get back the query in proper JSON format
+```
+curl -XPOST 127.0.0.1:9200/_xpack/sql/translate?pretty -d '
+{
+    "query": "SELECT title,year FROM movies WHERE year < 1920 ORDER BY year"
+}'
+```
+* there is an SQL client to accept SQL queries without hitting the REST api
+```
+cd /usr/share/elasticsearch/
+sudo bin/elasticsearch-sql-cli
+```
+* we can now wirite straight SQL `SELECT title,year FROM movies WHERE year < 1920 ORDER BY year;`
+* quit with `quit;`
+
+### Lecture 87. Failover in Action, Part 1
+
+* we will see what happens when we add a node to the ES cluster and what happens when a node goes away
+* set up 3 elasticsearch nodes on our VM
+* observe how ES automatically expands accross these new nodes
+* stop our master node and observe everything move to the others automatically
+* elasticsearch cluster has at least 3 nodes

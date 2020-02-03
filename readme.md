@@ -849,7 +849,7 @@ curl -XPUT 127.0.0.1:9200/movies/?pretty -d '
   "settings": {
     "analysis": {
         "filter": {
-            "autocomplete_filter": {
+            "autocomplete_filter":{
                 "type": "edge_ngram",
                 "min_gram": 1,
                 "max_gram": 20
@@ -859,10 +859,10 @@ curl -XPUT 127.0.0.1:9200/movies/?pretty -d '
             "autocomplete": {
                 "type": "custom",
                 "tokenizer": "standard",
-                "filter": [
+                "filter": {
                     "lowercase",
                     "autocomplete_filter"
-                ]
+                }
             }
         }
     }
@@ -901,71 +901,7 @@ curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
 
 ### Lecture 40. N-Grams, Part 2
 
-* delete index add analyzer
-```
-curl -XDELETE 127.0.0.1:9200/movies
-curl -XPUT 127.0.0.1:9200/movies/?pretty -d '
-{
-  "settings": {
-    "analysis": {
-        "filter": {
-            "autocomplete_filter": {
-                "type": "edge_ngram",
-                "min_gram": 1,
-                "max_gram": 20
-            }
-        },
-        "analyzer": {
-            "autocomplete": {
-                "type": "custom",
-                "tokenizer": "standard",
-                "filter": [
-                    "lowercase",
-                    "autocomplete_filter"
-                ]
-            }
-        }
-    }
-  }
-}'
-```
-* test the analyzer
-```
-curl -XGET 127.0.0.1:9200/movies/_analyze?pretty -d '
-{
-    "analyzer": "autocomplete",
-    "text": "Sta"
-}'
-```
-* we map the analyzer to the title field
-```
-curl -XPUT 127.0.0.1:9200/movies/_mapping?pretty -d '
-{
-    "properties": {
-        "title": {
-            "type": "text",
-            "analyzer": "autocomplete"
-        }
-    }
-}'
-```
-* load in the data `curl -XPUT 127.0.0.1:9200/_bulk --data-binary @movies.json`
-* do a query with the analyzer
-```
-curl -XGET 127.0.0.1:9200/movies/_search?pretty -d '
-{
-    "query": {
-        "match": {
-            "title": {
-                "query": "sta",
-                "analyzer": "standard"
-            }
-        }
-    }
-}'
-```
-
-## Section 4: Importing Data into your Index - Big or Small
+* reindex
 
 ### Lecture 43. Importing Data with a Script
 
@@ -1851,3 +1787,126 @@ sudo /bin/systemctl start kibana.service
 ### Lecture 68. Playing with Kibana
 
 * we will analyze the works of Shakespeare.. why??? because we can...
+* we click the management icon in left side menu
+* we need to setup an index pattern that will allow us to specify the index we want to use
+* index patterns allow us to group indexes
+* we select 'Create Index Pattern' and insert 'shakespeare' => Next Step => Create index Pattern
+* we see the fields available and their properties
+* we click the compass to go to Discover mode
+* we see raw query response
+* in filter we can enter search words and see the filtered results
+* if we click 'play_name' we see the plays where the keyword appears the most (with hits and %)
+* clicking visualize we get a visualization
+* clicking + on a lsted play we get the occurences of keyword for this play in the list...
+* we click on visuzalize => create new visualization and select a type => tag cloud => index=shakespeare 
+    * tag size count: aggregation => count
+    * buckets => ADD BUCKET (TAGS) => aggregation => terms => filed: textentry.keyword. order=> descentding 50 (top 50 results)
+* we see Dev Tools there we can execute raw JSON request to the ES cluster and avoid curl (more like postman)
+
+### Lecture 69. [Exercise] Exploring Data with Kibana
+
+* task: find the longest shakespeare play - create a vertical bar chart that aggregates the count of documents by play name in dscending order
+* visualize => create visualization => vertical barchart => shakespeare indx
+    * y axis : count
+    * x axis: buckets => xaxis, aggregation: terms, field: play_name, order: descent 50
+
+## Section 7: Analyzing Log Data with the Elastic Stack
+
+### Lecture 72. FileBeat and the Elastic Stack Architecture
+
+* Filebeat is a lightweight shipper for logs
+* it stands between logstash and files
+* it is installed on the source machine offering fault tolerance by buffering in case of loss of command
+* filebeat can optionally talk directly to elasticsearch. when using logstash ES is one of the many possible destinations for filebeat
+* logstash and filebeat communicate to maintain "backpressure" when things  back up
+* filebeat maintains a read pointer on the logs. every log line acts like a queue
+* logs can be from apache, nginx, auditd or mysql
+* its very light on servers
+* before beats we talked about the ELK stack
+* why use filebeat+logstash?
+    * it wont let us overload the pipelines
+    * we get more flexibility on scaling our cluster
+* backpressure: 
+    * logstash might not be able to cope with all logs coming in. 
+    * filebeat does not move the read pointer faster than logstash can handle
+    * logstash comms with filebeats on a backpressure sensitive protocol. logstash gives the rate to filebeat
+* we dont have to overscale to handle transient peaks (less money)
+* tipical cluster: beats on each source +  logstash modes (wit persistent queues) + elasticsearch cluster (master nodes, hot data nodes, warm data nodes) + kibana frontend
+* persistent queues guarantee at least once delivery and fast recovery from nodes failures. logstash will try to push from persistent quess untill delivery succeeds at least once
+
+### Lecture 73. X-Pack Security
+
+* Security: access control, data integrity, audit trails
+* Licenced version of X-pack offers many security feats (RBAC, IP filtering, Controlled access)
+* Security/Auth => users, groups, and roles
+    * RBAC
+    * Assign privileges to roles
+    * Assign roles to users and groups
+    * Control access to indices, aliases, documents or fields
+    * Can use Active Dir or LDAP realms via Distinguished names (dn's) for users
+* example of enforcing rules via x-pack
+```
+PUT /_security/role_mapping/admins
+{
+    "roles": ["monitoring", "user"],
+    "rules": { "field": { "groups": "cn=admins,dc=example,dc=com" } },
+    "enabled": true
+}
+
+PUT /_security/role_mapping/basic_users
+{
+    "roles": ["user"],
+    "rules": { "any": [
+        {"field": { "dn": "cn=John Doe,cn=contractors,dc=example,dc=com"}}.
+        {"field": { "groups": "cn=users,dc=example,dc=com"}}
+    ]},
+    "enabled": true
+}
+```
+* define a role that willl be used to users and groups
+```
+POST /_security/role/users
+{
+    "run_as": ["user_impersonator"],
+    "cluster": ["movielens"],
+    "indices": [
+        {
+            "names": ["movies"],
+            "privileges": ["read"],
+            "field_security": {
+                "grant": ["title","year","genres"]
+            }
+        }
+    ]
+}
+```
+* this creates a user giving him rights to access the cluster for specific data on his behalf. the permissions are very fine grained
+* permissions on RBAC basis are available in Kibana but on a paid x-pack scheme
+
+### Lecture 74. Installing FileBeat
+
+* installing and testing filebeat (assuming elastic search repo in the package repo)
+```
+cd ~
+sudo apt-get update && sudo apt-get install filebeat
+sudo /bin/systemctl stop elasticsearch.service
+sudo /bin/systemctl start elasticsearch.service
+
+mkdir ~/logs
+cd /logs
+wget http://media.sundog-soft.com/es7/access_log
+
+cd /etc/filebeat/modules.d
+sudo mv apache.yml.disabled apache.yml
+sudo nano apahe.yml
+```
+* add in file
+```
+["home/ubuntu/logs/access"]
+["home/ubuntu/logs/error"]
+```
+* run flebeats
+```
+sudo /bin/systemctl start filebeat.service
+```
+* the apache access_log will be consumed by filebeat and passed in elasticsearch (no logstash in between)

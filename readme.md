@@ -2143,3 +2143,95 @@ sudo bin/elasticsearch-sql-cli
 * observe how ES automatically expands accross these new nodes
 * stop our master node and observe everything move to the others automatically
 * elasticsearch cluster has at least 3 nodes
+* we will start multiple elastic nodes on a single VM (not ny real applicability just for exercise)
+```
+cd /etc
+sudo nano elasticsearch/elasticsearch.yml
+```
+* edit the file to fire up 3 nodes. 
+* add at the end `node.max_local_storage_nodes: 3`
+* uncomment and name cluster `cluster.name: Fred`
+* add nodes to master nodes `cluster.initial_master_nodes:["node-1","node-2","node-3]`
+* copy folder for node2 ` sudo cp -rp elasticsearch elasticsearch-node2`
+* edit yml file `sudo nano elasticsearch-node2/elasticsearch.yml`
+* set node name to node-2
+* uncomment port and change it `httpport: 9201`
+* do the same for node-3 cp and edit . name to node-3 port to 9202
+* we create service copies for the 2 new nodes
+```
+cd /usr/lib/systemd/system
+sudo cp elasticsearch.service elasticsearch-node2.service
+sudo nano elasticsearch-node2.service
+```
+* change the path to config file to the new one
+
+### Lecture 88. Failover in Action, Part 2
+
+* restart services 
+```
+sudo /bin/systemctl daemon-reload
+sudo /bin/systemctl stop elasticsearch
+sudo /bin/systemctl start elasticsearch
+sudo /bin/systemctl start elasticsearch-node2
+sudo /bin/systemctl start elasticsearch-node3
+```
+* we monitor the status of our cluster with `curl -XGET 127.0.0.1:9200/_cluster/health?pretty`
+* we need at least 3 nodes to be able to have a new master if the master node goes down
+* 4GB ram is not enoug for 3 nodes
+* cluster is relocating shards when it sees new nodes
+* we shutdown primary node `sudo /bin/systemctl stop elasticsearch.service` 
+* the cluster starts a new primary
+* we hit queries to node-2 (:9201) and we get results and we can write so cluster has rebalanced
+* we restart node-1 and cluster rebalances moving shards
+
+### Lecture 89. Snapshots
+
+* snapshots let us backup our indices
+* we can store the backups to a NAS, Amazon S3, HDFS, Azure....
+* its smart enough to only store changes since last snapshot
+* we create a repository for snapshots
+* add into elasticsearch.yml `path.repo: ["/home/ubuntu/backups"]`
+* create the dir and give permissions
+```
+cd ~
+mkdir backups
+chmod a+w backups
+```
+* restart service
+```
+sudo /bin/systemctl stop elasticsearch.service
+sudo /bin/systemctl stop elasticsearch-nde2.service
+sudo /bin/systemctl stop elasticsearch-node3.service
+sudo /bin/systemctl start elasticsearch.service
+sudo /bin/systemctl start elasticsearch-node2.service
+sudo /bin/systemctl start elasticsearch-node3.service
+```
+* we use kibana dev-tools
+* tell cluster to use the repo
+```
+PUT _snapshot/backup_repo
+{
+    "type": "fs",
+    "settings": {
+        "location": "/home/ubuntu/backups/backup-repo"       
+    }
+}
+```
+* path can be wherever
+* to use snapshots
+    * snapshot all open indices: `PUT _snapshot/backup-repo/snapshot-1`
+    * get info about a snapshot: `GET _snapshot/backup-repo/snapshot-1`
+    * monitor snapshot progress: `GET _snapshot/backup-repo/snapshot-1/_status`
+    * restore a snapshot of all indices (first close them to avoid race conditions)
+```
+POST /_all/_close
+POST _snapshot/backup-repo/snapshot-1/_restore
+```
+
+### Lecture 90. Rolling Restarts
+
+* restarting the cluster
+* sometimes we have to OS updates,elasticsearch version updates
+* to make this go quickly and smoothly we want to disable index relocation while doing this
+* Rolling Restart Procedure
+    * stop indexing new data if possible

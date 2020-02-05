@@ -2233,5 +2233,69 @@ POST _snapshot/backup-repo/snapshot-1/_restore
 * restarting the cluster
 * sometimes we have to OS updates,elasticsearch version updates
 * to make this go quickly and smoothly we want to disable index relocation while doing this
-* Rolling Restart Procedure
+* Rolling Restart Procedure:
     * stop indexing new data if possible
+    * disable shard allocation
+    * shut down one node
+    * perform maintenance on it and restart. confirm it joins the cluster
+    * re-enable shard allocation
+    * wait for the cluster to return to green status
+    * repeat steps 2-6 for all other nodes
+    * resume indexig new data
+* CHEAT SHEET commands
+* Disable shard allocation
+```
+PUT _cluster/settings
+{
+    "transient": {
+        "cluster.routing.allocation.enable": "none"
+    }
+}
+```
+* Stop Elasticsearch safely `sudo /bin/systemctl stop elasticsearch.service`
+* Enable shard allocation
+```
+PUT _cluster/settings
+{
+    "transient": {
+        "cluster.routing.allocation.enable": "all"
+    }
+}
+```
+* with this technique we avoid rebalancing and delays
+
+## Section 9: Elasticsearch in the Cloud
+
+### Lecture 93. Amazon Elasticsearch Service, Part 1
+
+* amazon ES lets us quickly rent and confirgure an elasticsearch cluster
+* the main thing that different from what we ve seen so far is security
+* if our infra is on AWS we can use Kinesis service to feed data to ES cluster instead of logstash
+    * AWS Management Console => ElasticeSearch Service => Create a new domain (cluster) => Dev and testing => select version
+    * enter name => select instant type
+    * for production select dedicated master instances
+    * Next
+    * For secure env select VPC access. aws offers secure connection
+    * setup access policy => select template => allow access to the domain from specific IPs => enter clients public ip
+    * review access policy => next => confirm (AWS markets i KInesis Firehose streamer to use on ES)
+
+### Lecture 94. Amazon Elasticsearch Service, Part 2
+
+* when cluster launches we get the endpoints to connect
+
+### Lecture 95. The Elastic Cloud
+
+* Elastic Cloud:
+    * Elastic's hosted solution
+    * built on top of AWS
+    * includes x-pack (unlike amazon aws)
+    * simpler setup ui
+    * x-pack smplifies things
+    * this costs extra money
+* its built on top of AWS (hosted on AWS) so expect more charges than Elasticsearch service
+* go to [Elastic](https://elastic.co) create trial account
+* homepage => create deployment => give it a name => select platform => select region => optimize deployment => create deloyment
+* Launch Kibana =>Login
+* we can load files to ES cluster directly
+* our cluster is secure so no curl from outside. only http from browser with token from auth
+* to pass seccurity we need to `curl --user username:password -XGET ....`

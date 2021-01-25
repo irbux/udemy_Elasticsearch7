@@ -553,7 +553,7 @@ curl -XGET 127.0.0.1:9200/series/_search?pretty -d '
 
 
 
-### Lecture 26. Fllatened Data Type.
+### Lecture 26. Flattened Data Type.
 below code from here http://media.sundog-soft.com/es/flattened.txt
 
 ```
